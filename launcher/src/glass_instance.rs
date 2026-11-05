@@ -580,7 +580,7 @@ impl Launcher {
         let Some(d) = self.instances.dialog.as_ref() else {
             return div();
         };
-        let (busy, copy, error) = (d.busy, d.copy, d.error.clone());
+        let (busy, copy, error, offline) = (d.busy, d.copy, d.error.clone(), d.offline);
         let title = match (editing, kind) {
             (Some(i), _) => trf("Edit {name}", &[("name", &i.name)]),
             (None, NewKind::Horizon) => tr("A new Horizon instance").into(),
@@ -665,6 +665,7 @@ impl Launcher {
                 body = body.child(self.loader_choice(cx));
             }
         }
+        body = body.child(self.account_mode_choice(offline, cx));
         let name = self
             .field(Field::InstanceName, tr("My instance"), 340., cx)
             .flex_1()
@@ -897,6 +898,62 @@ impl Launcher {
             tr("Start from").into(),
             None,
             div().flex().gap(px(10.)).child(empty).child(copied),
+        )
+    }
+
+    /// Premium (Microsoft) or No premium (Offline) choice.
+    fn account_mode_choice(&mut self, offline: bool, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
+        let card = |on: bool, id: &'static str| {
+            choice(id, on, &t)
+                .flex_1()
+                .min_w_0()
+                .items_center()
+                .gap(px(12.))
+                .p(px(16.))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(d) = &mut this.instances.dialog {
+                        d.offline = id == "instance-account-offline";
+                    }
+                    cx.notify();
+                }))
+        };
+        let premium = card(!offline, "instance-account-premium")
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(36.))
+                    .rounded(px(radius::CONTROL))
+                    .bg(white(fill::BUTTON))
+                    .child(crate::microsoft::logo(18.)),
+            )
+            .child(choice_text(
+                tr("Premium"),
+                tr("Play online with your Microsoft account"),
+            ));
+        let no_premium = card(offline, "instance-account-offline")
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(36.))
+                    .rounded(px(radius::CONTROL))
+                    .bg(white(fill::BUTTON))
+                    .child(ui::icon("user", 18., white(ink::BODY))),
+            )
+            .child(choice_text(
+                tr("No premium"),
+                tr("Offline · single player and LAN worlds"),
+            ));
+        section(
+            tr("Account").into(),
+            None,
+            div().flex().gap(px(10.)).child(premium).child(no_premium),
         )
     }
 

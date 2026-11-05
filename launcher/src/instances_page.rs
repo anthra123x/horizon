@@ -57,6 +57,8 @@ pub(super) struct InstanceDialog {
     pub(super) java: new_instance::JavaChoice,
     /// The Horizon version it keeps (`Instance::version`); None follows the launcher's.
     pub(super) pin: Option<String>,
+    /// Whether this instance runs in offline (non-premium) mode.
+    pub(super) offline: bool,
     /// The loader logo `picture` was made from, when it was one.
     pub(super) logo: Option<&'static str>,
 }
@@ -289,6 +291,10 @@ impl Launcher {
                 ..Default::default()
             },
         };
+        let offline = editing
+            .as_ref()
+            .and_then(|i| i.offline)
+            .unwrap_or_else(|| self.accounts.selected.is_none());
         self.instances.dialog = Some(InstanceDialog {
             icon: editing.as_ref().and_then(|i| i.icon.clone()),
             pin: editing.as_ref().and_then(|i| i.version.clone()),
@@ -299,6 +305,7 @@ impl Launcher {
             error: None,
             busy: false,
             java,
+            offline,
         });
         self.servers.text(Field::InstanceVersion).set(String::new());
         // A new one starts with the name it would get ("My Horizon"), until the player types one.
@@ -355,6 +362,7 @@ impl Launcher {
         let Some(d) = self.instances.dialog.as_mut().filter(|d| !d.busy) else {
             return;
         };
+        let offline = d.offline;
         let icon = d.icon.clone();
         let pin = d.pin.clone();
         let picture = d
@@ -411,6 +419,7 @@ impl Launcher {
                 m.name = Some(name);
                 m.group = group;
                 m.icon = icon;
+                m.offline = Some(offline);
                 if plays_horizon {
                     m.version = pin;
                 }

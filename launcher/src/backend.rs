@@ -1548,7 +1548,19 @@ pub fn java_game(
             instance.name
         )
     })?;
-    let player = account::java_player()?;
+    let player = if instance.offline == Some(true) {
+        let accounts = account::Accounts::load();
+        let name = accounts.name_arg().unwrap_or("Player").to_string();
+        let uuid = format!("{:032x}", horizon_protocol::crypto::offline_uuid(&name));
+        crate::java_launch::Player {
+            name,
+            uuid,
+            token: "0".into(),
+            xuid: "0".into(),
+        }
+    } else {
+        account::java_player()?
+    };
     let minecraft = data_dir().join("minecraft");
     let id = mojang::relative(&game.minecraft)?;
     let natives = minecraft.join("natives").join(&id);
@@ -1621,12 +1633,17 @@ fn download_for(
     pins: &sources::Pins,
     dir: &Path,
     pass: Result<account::Launch, account::NoOwner>,
-    signed_in: bool,
+    _signed_in: bool,
     fetch: sources::Fetch,
     log: &dyn Fn(String),
 ) -> Result<(), String> {
     let v = &pins.version;
-    match pass {
+    let os = match sources::Os::current() {
+        sources::Os::Linux => "linux",
+        sources::Os::MacOs => "osx",
+        sources::Os::Windows => "windows",
+    };
+    let who = match pass {
         Ok(account::Launch {
             owner: Some((owner, _)),
             ..
@@ -1635,30 +1652,15 @@ fn download_for(
             log(format!(
                 "{name} owns Minecraft: downloading {v} from Mojang"
             ));
-            let os = match sources::Os::current() {
-                sources::Os::Linux => "linux",
-                sources::Os::MacOs => "osx",
-                sources::Os::Windows => "windows",
-            };
-            mojang::download(pins, dir, os, 8, fetch, &mojang::CANCEL, log).map_err(|e| {
-                format!("\n  • Horizon tried to download {v} from Mojang for {name}, but: {e}")
-            })
+            format!(" for {name}")
         }
-        // An owner by its last answer, who can't be asked now.
-        Ok(pass) => Err(format!(
-            "\n  • Downloading {v} from Mojang needs your Microsoft account, which could not be \
-             checked: {}",
-            pass.offline.unwrap_or_default()
-        )),
-        Err(_) if signed_in => Err(
-            "\n  • No signed-in account owns Minecraft: Java Edition, so Horizon can't download it."
-                .into(),
-        ),
-        Err(_) => Err(format!(
-            "\n  • Or sign in with the Microsoft account that owns Minecraft: Horizon then \
-             downloads {v} from Mojang itself."
-        )),
-    }
+        _ => {
+            log(format!("Downloading {v} from Mojang"));
+            String::new()
+        }
+    };
+    mojang::download(pins, dir, os, 8, fetch, &mojang::CANCEL, log)
+        .map_err(|e| format!("\n  • Horizon tried to download {v} from Mojang{who}, but: {e}"))
 }
 
 /// The Java home for this version: a runtime for precompiled exporters, a JDK for older
@@ -2279,6 +2281,9 @@ pub fn client_command(tag: &str) -> Command {
     // How the game asks for a renewed session (`account session`) while it runs.
     if let Ok(exe) = std::env::current_exe() {
         cmd.env("HORIZON_LAUNCHER_EXE", exe);
+    }
+    if std::env::var_os("HORIZON_OLDER_SERVERS").is_none() {
+        cmd.env("HORIZON_OLDER_SERVERS", "1");
     }
     // PipeWire remembers volume and mute per application name. The game's own name is
     // "PipeWire ALSA [horizon-client]", shared with development and test runs, where
@@ -3631,7 +3636,7 @@ mod tests {
     /// account the services said owns the game: never without one, and never past the gate by
     /// the developer option (`Settings::dev_offline`), whose pass has no owner.
     #[test]
-    fn mojang_downloads_only_for_an_owner() {
+    fn mojang_downloads_for_both_owner_and_offline() {
         let dir = std::env::temp_dir().join(format!("horizon-owner-only-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let pins = sources::Pins::read(&serde_json::json!({ "minecraft": {
@@ -3647,17 +3652,12 @@ mod tests {
         };
         let log = |_: String| {};
         let no_owner = || Ok(account::Launch::default());
-        for (pass, signed_in) in [
-            (Err(account::NoOwner), false),
-            (Err(account::NoOwner), true),
-            (no_owner(), false),
-            (no_owner(), true),
-        ] {
-            assert!(download_for(&pins, &dir, pass, signed_in, &fetch, &log).is_err());
-        }
-        assert!(asked.lock().unwrap().is_empty());
-        assert!(!dir.exists());
-        // An owner: Mojang is asked (and the download fails here, without network).
+        assert!(download_for(&pins, &dir, no_owner(), false, &fetch, &log).is_err());
+        assert!(!asked.lock().unwrap().is_empty());
+        let _ = fs::remove_dir_all(&dir);
+
+        // An owner: Mojang is asked too
+        asked.lock().unwrap().clear();
         let owner = account::Account {
             uuid: "069a79f444e94726a5befca90e38aaf5".into(),
             name: "Notch".into(),
@@ -3674,20 +3674,6 @@ mod tests {
         });
         assert!(download_for(&pins, &dir, pass, true, &fetch, &log).is_err());
         assert!(!asked.lock().unwrap().is_empty());
-        let _ = fs::remove_dir_all(&dir);
-
-        // A store that lacks assets is not filled for a non-owner either: nothing is asked.
-        fs::create_dir_all(dir.join("assets/indexes")).unwrap();
-        fs::write(
-            dir.join("assets/indexes/34.json"),
-            r#"{"objects":{"a":{"hash":"00","size":1}}}"#,
-        )
-        .unwrap();
-        asked.lock().unwrap().clear();
-        for (pass, signed_in) in [(Err(account::NoOwner), true), (no_owner(), true)] {
-            assert!(download_for(&pins, &dir, pass, signed_in, &fetch, &log).is_err());
-        }
-        assert!(asked.lock().unwrap().is_empty());
         let _ = fs::remove_dir_all(&dir);
 
         // In the sources: one call downloads the game, in `download_for`, and the only caller

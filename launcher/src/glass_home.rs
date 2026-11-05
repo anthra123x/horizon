@@ -41,7 +41,6 @@ impl Launcher {
                 .flex_col()
                 .flex_1()
                 .min_w_0()
-                .child(self.edition_tabs(java.is_some()))
                 .child(self.home_title())
                 .child(self.played_text(cx))
                 .child(
@@ -77,6 +76,7 @@ impl Launcher {
 
     /// The edition tabs (`Tabs`, size `sm`): the instance's own lit. An instance's edition is
     /// chosen when it is made, so the other one is shown but can't be picked.
+    #[allow(dead_code)]
     fn edition_tabs(&mut self, java: bool) -> Div {
         let grass = self.vanilla_icon().and_then(|path| {
             self.icon_image("mark:grass".into(), 18., false, move || {

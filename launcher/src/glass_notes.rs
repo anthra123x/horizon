@@ -67,7 +67,7 @@ impl Launcher {
         let list = self.long_list.clone().column(
             &self.content_scroll.handle,
             releases.len(),
-            10.,
+            12.,
             |_| false,
             |i| {
                 let release = &releases[i];
@@ -87,6 +87,7 @@ impl Launcher {
                     .flex_col()
                     .gap(px(12.))
                     .p(px(24.))
+                    .mb(px(12.))
                     .child(
                         ui::text(16., FontWeight::SEMIBOLD, ink::FULL)
                             .line_height(px(24.))

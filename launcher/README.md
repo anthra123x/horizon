@@ -40,8 +40,8 @@ The opening, then Play ([clip](docs/opening.webm)):
   not prepared yet does it all for an owner, as the official launcher does: it prepares from the
   install when there is one, else downloads (with Mojang's Java when no Java 25 is installed), then
   starts the game. With no install on the computer the Play page offers the download alone and the
-  Minecraft folder row says none is needed. Without an owner,
-  the Play page asks to sign in first. `horizon-launcher prepare --download`.
+  Minecraft folder row says none is needed. Offline players can play directly with their chosen name,
+  while online-mode servers require signing in with a Microsoft account. `horizon-launcher prepare --download`.
 - **Mods**: **Mods** and **Shader packs** search Horizon's own registry (a Java instance's mods
   come from Modrinth), **Resource packs** searches Modrinth, each marked Works, Partly or Doesn't
   run in Horizon; Modrinth's data packs aren't usable yet and have no tab. Install puts a file in the game folder only after its checksum matches, and a

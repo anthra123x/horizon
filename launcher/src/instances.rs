@@ -155,6 +155,9 @@ pub struct Meta {
     /// Set for a Minecraft: Java Edition instance: it plays the real game, not Horizon.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub java: Option<JavaGame>,
+    /// Whether this instance runs in offline (non-premium) mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offline: Option<bool>,
     /// A Java instance's own settings while it plays Horizon, back when it plays Java again
     /// ([`switch`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -251,6 +254,8 @@ pub struct Instance {
     pub launch: Launch,
     /// The Minecraft: Java Edition it plays, for a Java instance.
     pub java: Option<JavaGame>,
+    /// Whether this instance runs in offline (non-premium) mode.
+    pub offline: Option<bool>,
 }
 
 impl Instance {
@@ -353,6 +358,7 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
                     .map(|s| UNIX_EPOCH + Duration::from_secs(s)),
                 launch: meta.launch,
                 java: meta.java,
+                offline: meta.offline,
                 id,
                 kind,
                 work,

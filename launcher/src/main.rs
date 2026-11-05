@@ -1728,10 +1728,17 @@ impl Launcher {
         self.starting_client = Some(tag.clone());
         self.play_pressed = Some(Instant::now());
         let tx = self.tx.clone();
-        let offline_without_owner = self.settings.dev_offline;
+        let force_offline = self
+            .selected_instance()
+            .is_some_and(|i| i.offline == Some(true));
+        let offline_without_owner = self.settings.dev_offline || force_offline;
         std::thread::spawn(move || {
             backend::complete_assets(&tag);
-            let session = account::session_for_game(&backend::game_home(), offline_without_owner);
+            let session = if force_offline {
+                Ok(account::GameSession::default())
+            } else {
+                account::session_for_game(&backend::game_home(), offline_without_owner)
+            };
             let _ = tx.send(Msg::Session(session));
         });
     }
@@ -2348,12 +2355,11 @@ fn sign_in_change(shown: &mut Option<SignInState>, next: SignInState) -> Option<
 }
 
 /// `owner`: whether an account here owns the game, by the keychain (`Launcher::owner`).
-fn play_press(prepared: bool, owner: Option<bool>, busy: bool) -> PlayPress {
-    match (prepared, owner) {
+fn play_press(prepared: bool, _owner: Option<bool>, busy: bool) -> PlayPress {
+    match prepared {
         _ if busy => PlayPress::Nothing,
-        (true, _) => PlayPress::Play,
-        (false, Some(true)) => PlayPress::PrepareThenPlay,
-        (false, _) => PlayPress::Nothing,
+        true => PlayPress::Play,
+        false => PlayPress::PrepareThenPlay,
     }
 }
 
@@ -2692,12 +2698,18 @@ impl Launcher {
         }));
         // The last native build's log, when there is one (`native_log_page`).
         let build_log = self.native_log.available.then(|| {
-            tab_action("topbar-native-log", "Build log", &t).on_click(cx.listener(
-                |this, _: &ClickEvent, _, cx| {
-                    this.native_log_open();
-                    cx.notify();
-                },
-            ))
+            let _ = tr("Build log");
+            shell::icon_button(
+                "topbar-native-log",
+                "terminal",
+                40.,
+                self.native_log.open,
+                &t,
+            )
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.native_log_open();
+                cx.notify();
+            }))
         });
         div()
             .flex()
@@ -5533,9 +5545,8 @@ mod tests {
         );
     }
 
-    /// An owner's Play works on a version not prepared yet: it prepares it (downloading
-    /// Minecraft from Mojang when this computer has no install), then plays. Without an owner
-    /// it stays off: signing in comes first.
+    /// Play works on a version not prepared yet: it prepares it (downloading
+    /// Minecraft from Mojang when this computer has no install), then plays.
     #[test]
     fn play_prepares_first_for_an_owner() {
         use super::{play_press, PlayPress};
@@ -5545,8 +5556,11 @@ mod tests {
             play_press(false, Some(true), false),
             PlayPress::PrepareThenPlay
         );
-        assert_eq!(play_press(false, Some(false), false), PlayPress::Nothing);
-        assert_eq!(play_press(false, None, false), PlayPress::Nothing);
+        assert_eq!(
+            play_press(false, Some(false), false),
+            PlayPress::PrepareThenPlay
+        );
+        assert_eq!(play_press(false, None, false), PlayPress::PrepareThenPlay);
         assert_eq!(play_press(false, Some(true), true), PlayPress::Nothing);
         assert_eq!(play_press(true, Some(true), true), PlayPress::Nothing);
     }

@@ -42,6 +42,12 @@ struct Pieces {
     /// The light appearance: plates are white at [`LIGHT_GLASS`] or [`LIGHT_FLOAT`] over the dawn
     /// sky, which has no blurred copy.
     light: bool,
+    /// Full-window backdrop images baked once per window size/look/generation.
+    full_glass: Option<Arc<RenderImage>>,
+    full_float: Option<Arc<RenderImage>>,
+    full_size: (f32, f32),
+    full_scale: f32,
+    full_generation: u32,
 }
 
 /// How much white a light plate takes, and a light menu's.
@@ -57,6 +63,11 @@ thread_local! {
         pieces: HashMap::new(),
         retired: Vec::new(),
         light: false,
+        full_glass: None,
+        full_float: None,
+        full_size: (0., 0.),
+        full_scale: 0.,
+        full_generation: 0,
     });
 }
 
@@ -189,20 +200,153 @@ fn image_at(bounds: Bounds<Pixels>, kind: Kind, fillet: f32) -> Option<Arc<Rende
     })
 }
 
+fn build_dark_full_image(
+    backdrop: &Backdrop,
+    look: &Glass,
+    kind: Kind,
+    vw: f32,
+    vh: f32,
+    scale: f32,
+) -> Arc<RenderImage> {
+    let scale = scale.max(0.1);
+    let img_w = (vw * scale).round().max(1.) as usize;
+    let img_h = (vh * scale).round().max(1.) as usize;
+    let grid = if kind == Kind::Float {
+        &backdrop.float
+    } else {
+        &backdrop.glass
+    };
+    let bw = backdrop.w;
+    let bh = backdrop.h;
+    let bpx = backdrop.px.max(0.1);
+
+    let mut cols = Vec::with_capacity(img_w);
+    for col in 0..img_w {
+        let lx = (col as f64 + 0.5) / scale as f64;
+        let fx = (lx / bpx - 0.5).clamp(0., (bw.saturating_sub(1)) as f64);
+        let x0 = fx.floor() as usize;
+        let x1 = (x0 + 1).min(bw.saturating_sub(1));
+        let tx = (fx - x0 as f64) as f32;
+        cols.push((x0, x1, tx));
+    }
+
+    let tint = [16, 8, 0].map(|s| ((look.plate >> s) & 255) as f32 / 255.);
+    let a = look.plate_alpha;
+    let one_minus_a = 1. - a;
+    let tint_a = [tint[0] * a, tint[1] * a, tint[2] * a];
+
+    let mut buf = image::RgbaImage::new(img_w as u32, img_h as u32);
+    for (row, line) in buf.rows_mut().enumerate() {
+        let ly = (row as f64 + 0.5) / scale as f64;
+        let fy = (ly / bpx - 0.5).clamp(0., (bh.saturating_sub(1)) as f64);
+        let y0 = fy.floor() as usize;
+        let y1 = (y0 + 1).min(bh.saturating_sub(1));
+        let ty = (fy - y0 as f64) as f32;
+        let row0 = y0 * bw;
+        let row1 = y1 * bw;
+
+        for (col, p) in line.enumerate() {
+            let (x0, x1, tx) = cols[col];
+            let c00 = grid[row0 + x0];
+            let c10 = grid[row0 + x1];
+            let c01 = grid[row1 + x0];
+            let c11 = grid[row1 + x1];
+
+            let r_top = c00[0] + (c10[0] - c00[0]) * tx;
+            let g_top = c00[1] + (c10[1] - c00[1]) * tx;
+            let b_top = c00[2] + (c10[2] - c00[2]) * tx;
+
+            let r_bot = c01[0] + (c11[0] - c01[0]) * tx;
+            let g_bot = c01[1] + (c11[1] - c01[1]) * tx;
+            let b_bot = c01[2] + (c11[2] - c01[2]) * tx;
+
+            let r = r_top + (r_bot - r_top) * ty;
+            let g = g_top + (g_bot - g_top) * ty;
+            let b = b_top + (b_bot - b_top) * ty;
+
+            let mr = ((tint_a[0] + r * one_minus_a) * 255.).round() as u8;
+            let mg = ((tint_a[1] + g * one_minus_a) * 255.).round() as u8;
+            let mb = ((tint_a[2] + b * one_minus_a) * 255.).round() as u8;
+
+            // BGRA, opaque.
+            *p = image::Rgba([mb, mg, mr, 255]);
+        }
+    }
+
+    Arc::new(RenderImage::new([image::Frame::new(buf)]))
+}
+
 fn paint(bounds: Bounds<Pixels>, kind: Kind, corners: Corners<Pixels>, window: &mut Window) {
-    if let Some(image) = image_at(bounds, kind, 0.) {
-        // The piece's border texels go just outside the plate (see [`piece`]).
-        let (w, h) = (
-            f32::from(bounds.size.width).round(),
-            f32::from(bounds.size.height).round(),
-        );
-        let (cols, rows) = texels(w, h);
-        let (tx, ty) = (w / cols as f32, h / rows as f32);
-        let outer = Bounds::new(
-            bounds.origin - gpui::point(px(tx), px(ty)),
-            bounds.size + gpui::size(px(tx * 2.), px(ty * 2.)),
-        );
-        let _ = window.paint_image(bounds, outer, corners, image, 0, false);
+    let scale = window.scale_factor();
+    let viewport = window.viewport_size();
+    let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
+    if vw <= 0. || vh <= 0. {
+        return;
+    }
+
+    let (image, image_bounds) = PIECES.with_borrow_mut(|p| {
+        let light = p.light;
+        if !light && p.backdrop.is_none() {
+            return (None, bounds);
+        }
+
+        if p.full_generation != p.generation
+            || p.full_size != (vw, vh)
+            || (p.full_scale - scale).abs() > 0.001
+        {
+            if let Some(old) = p.full_glass.take() {
+                p.retired.push(old);
+            }
+            if let Some(old) = p.full_float.take() {
+                p.retired.push(old);
+            }
+            p.full_generation = p.generation;
+            p.full_size = (vw, vh);
+            p.full_scale = scale;
+        }
+
+        let image = match kind {
+            Kind::Glass => {
+                if p.full_glass.is_none() {
+                    let img = if light {
+                        let buf = image::RgbaImage::from_pixel(2, 2, light_texel(Kind::Glass, 1.));
+                        Arc::new(RenderImage::new([image::Frame::new(buf)]))
+                    } else if let Some(backdrop) = p.backdrop.as_ref() {
+                        build_dark_full_image(backdrop, &p.look, Kind::Glass, vw, vh, scale)
+                    } else {
+                        return (None, bounds);
+                    };
+                    p.full_glass = Some(img);
+                }
+                p.full_glass.clone()
+            }
+            Kind::Float => {
+                if p.full_float.is_none() {
+                    let img = if light {
+                        let buf = image::RgbaImage::from_pixel(2, 2, light_texel(Kind::Float, 1.));
+                        Arc::new(RenderImage::new([image::Frame::new(buf)]))
+                    } else if let Some(backdrop) = p.backdrop.as_ref() {
+                        build_dark_full_image(backdrop, &p.look, Kind::Float, vw, vh, scale)
+                    } else {
+                        return (None, bounds);
+                    };
+                    p.full_float = Some(img);
+                }
+                p.full_float.clone()
+            }
+        };
+
+        let img_bounds = if light {
+            bounds
+        } else {
+            Bounds::new(gpui::point(px(0.), px(0.)), viewport)
+        };
+
+        (image, img_bounds)
+    });
+
+    if let Some(image) = image {
+        let _ = window.paint_image(bounds, image_bounds, corners, image, 0, false);
     }
 }
 
