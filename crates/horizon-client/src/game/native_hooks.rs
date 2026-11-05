@@ -6,6 +6,40 @@
 //! Horizon's own HUD extras do, and keep a mod's settings where the
 //! WebAssembly mod of the same id kept them.
 //!
+//! API 426 adds client Host services, GUI painting, model-head snapshots and client lifecycle notifications.
+//!
+//! API 425 adds the drawn-map sender on Host (`send_map`, the existing `native_send_map`).
+//!
+//! API 424 adds entity handles on a client (`native_entity` and the `entity_*` and `living_*` reads over the entities the server shows the window, armor stands' custom names and equipment included) and the stacks of a server-opened menu by slot (`native_menu_stacks`).
+//!
+//! API 423 adds world primitives (`native_world_primitives`): lines, boxes, beams and text a client mod draws in the world each frame.
+//!
+//! API 422 adds the glowing outline a client draws on an entity (`native_entity_outline`).
+//!
+//! API 421 adds a final foreground GUI overlay (`native_gui_render_post`) and the current frame's camera during GUI rendering.
+//!
+//! API 420 adds a mod's own fluids in tanks (`native_fluid_insert` takes any namespaced fluid outside `minecraft`), and the tanks' contents read through `Host` (`native_fluid_tanks`).
+//!
+//! API 419 adds the current of a fluid at a position (`native_fluid_flow`, `FluidState.getFlow`).
+//!
+//! API 418 adds turning parts of a block entity's kept geometry (`BlockEntityDraw::spin`, `still`): the game turns them each frame from the game time.
+//!
+//! API 417 adds a scene of blocks and their mod block entities drawn in a screen from an angle (`native_draw_scene`), as Create's Ponder shows its machines.
+//!
+//! API 416 adds text in the world from `native_block_entity_submit` (`native_draw_text`), as a sign draws its lines.
+//!
+//! API 415 adds the texture a block state shows on a side, by the name the block entity drawing helpers take (`native_block_face_sprite`), for copycat blocks.
+//!
+//! API 414 adds chunks a mod keeps loaded and ticking (`native_force_chunk`, `native_forced_chunks`).
+//!
+//! API 413 adds a mod container's say on which items it takes (`native_container_accepts`).
+//!
+//! API 412 adds a mod's machine breaks blocks with a tool and keeps their drops (`native_machine_destroy_block`) and shows its crack (`native_set_break_progress`).
+//!
+//! API 411 adds a mod's fake player uses an item on a block, in the air or on an entity (`native_use_as_player`), as a deployer does.
+//!
+//! API 410 adds trait mods reach helpers `dyn Host` couldn't carry: `draw_model`, `mod_block_entity` and `change_mod_block_entity` (a neighbour's mod block entity), `item_entities`, `level_random`, `play_sound` and `send_particles` outside level hooks, `block_name_in_tag`, `server_item_in_tag`, item components, `trigger_criterion`, and the player's `equipment` and `sneaking`.
+//!
 //! API 409 adds a client mod's play packet to the server, as it is (`native_send_packet`).
 //!
 //! API 408 adds reading the server's play packets on the client (`native_client_packet`).
@@ -1158,7 +1192,7 @@ pub(super) use horizon_world::level::flags;
 /// The hook points' API version. The launcher reads this line from the
 /// source it builds; keep its form.
 #[allow(dead_code)]
-pub(crate) const NATIVE_HOOKS_API: u32 = 409;
+pub(crate) const NATIVE_HOOKS_API: u32 = 426;
 
 impl GameLevel<'_> {
     /// A hopper at `pos` is about to pick up `count` of `item`. Set `cancel` to leave the dropped stack in the world. Server-side. 232.
@@ -2508,7 +2542,7 @@ impl Game<'_> {
     /// is in GUI pixels. `native_camera` is this frame's world camera (None on
     /// the panorama). `gui_hidden` is the F1 setting; `focused` is window focus.
     /// A mod decides whether its foreground indicator respects those flags.
-    /// Client only; the host is read-only. API @API:gui_render_post@.
+    /// Client only; the host is read-only. API 421.
     pub(super) fn native_gui_render_post(
         &self,
         batch: &mut HudBatch,
@@ -2776,7 +2810,7 @@ impl Game<'_> {
     /// facing the camera, in world coordinates, to `primitives`, each depth tested or seen
     /// through walls (`horizon_client::world_primitives`). Horizon draws them with its own
     /// pipelines after the entities and before the first-person hand, at the world's
-    /// resolution, depth and TAA. Not on the title screen. API @API:world_primitives@.
+    /// resolution, depth and TAA. Not on the title screen. API 423.
     pub(super) fn native_world_primitives(
         &self,
         partial: f32,
@@ -2813,7 +2847,7 @@ impl Game<'_> {
     /// only what this client draws: the entity's `Glowing` flag, what the
     /// server and other players see, stays. Asked each frame for every mob,
     /// player (yourself in third person), dropped item and projectile drawn.
-    /// API @API:entity_outline@.
+    /// API 422.
     pub(super) fn native_entity_outline(
         &self,
         entity_id: u32,
@@ -3228,7 +3262,7 @@ impl Game<'_> {
     /// the block's `ModContainer` lets that slot be filled through that face
     /// (its `inputs` and `faces`). Set `cancel` to refuse the item there; the
     /// mover tries the next slot. Not asked for a player's clicks in a menu
-    /// (`native_menu_slot_rules`). Bundles need "hooks": @API:container_accepts@.
+    /// (`native_menu_slot_rules`). Bundles need "hooks": 413.
     pub(super) fn native_container_accepts(
         &self,
         pos: [i32; 3],
