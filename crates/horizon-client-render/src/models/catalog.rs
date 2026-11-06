@@ -151,8 +151,14 @@ impl StateModels {
         blocks: &[&str],
         sprites: &mut Sprites,
     ) -> Result<Self> {
-        let facts: BTreeMap<String, Value> =
-            serde_json::from_slice(&fs::read(root.join("model-states.json"))?)?;
+        let states_path = root.join("model-states.json");
+        let states_bytes =
+            fs::read(&states_path).map_err(|e| format!("{}: {e}", states_path.display()))?;
+        if states_bytes.is_empty() {
+            return Err(format!("{}: file is empty (0 bytes)", states_path.display()).into());
+        }
+        let facts: BTreeMap<String, Value> = serde_json::from_slice(&states_bytes)
+            .map_err(|e| format!("{}: {e}", states_path.display()))?;
         Self::from_facts(root, registry, blocks, sprites, &facts)
     }
     /// Bind and bake models using an already parsed model-state document.

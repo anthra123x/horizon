@@ -755,7 +755,8 @@ impl ItemRenderer {
             .map(|(item, components)| {
                 Ok((item.clone(), serde::Deserialize::deserialize(components)?))
             })
-            .collect::<serde_json::Result<_>>()?;
+            .collect::<serde_json::Result<_>>()
+            .map_err(|e| format!("{}: {e}", root.join("items.json").display()))?;
         let models = ItemModels {
             definitions: if drawn {
                 load_definitions(root)

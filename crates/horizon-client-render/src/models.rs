@@ -92,8 +92,14 @@ pub(crate) fn prepare_with_models(
     sprites: &mut Sprites,
     models: &crate::model_library::ParsedModels,
 ) -> Result<PreparedModels> {
-    let facts: std::collections::BTreeMap<String, Value> =
-        serde_json::from_slice(&std::fs::read(root.join("model-states.json"))?)?;
+    let states_path = root.join("model-states.json");
+    let states_bytes =
+        std::fs::read(&states_path).map_err(|e| format!("{}: {e}", states_path.display()))?;
+    if states_bytes.is_empty() {
+        return Err(format!("{}: file is empty (0 bytes)", states_path.display()).into());
+    }
+    let facts: std::collections::BTreeMap<String, Value> = serde_json::from_slice(&states_bytes)
+        .map_err(|e| format!("{}: {e}", states_path.display()))?;
     let blocks: Vec<&str> = facts
         .keys()
         .filter(|name| registry.default_state(name).is_some())
@@ -161,8 +167,13 @@ pub fn load_visibility(
     use std::{collections::BTreeMap, fs};
     let file = BlockTableFile::open(&root.join("occlusion.nbt"), registry)?;
     let occlusion = CachedCollisionRegistry::from_table(file.table("occlusion")?)?;
+    let defs_path = root.join("render-definitions.json");
+    let defs_bytes = fs::read(&defs_path).map_err(|e| format!("{}: {e}", defs_path.display()))?;
+    if defs_bytes.is_empty() {
+        return Err(format!("{}: file is empty (0 bytes)", defs_path.display()).into());
+    }
     let raw: BTreeMap<String, Value> =
-        serde_json::from_slice(&fs::read(root.join("render-definitions.json"))?)?;
+        serde_json::from_slice(&defs_bytes).map_err(|e| format!("{}: {e}", defs_path.display()))?;
     let definitions = raw
         .into_iter()
         .map(|(name, v)| {

@@ -288,7 +288,12 @@ impl Biomes {
             .collect();
         files.sort_by_cached_key(|f| format!("{}.json", f.name));
         for file in files {
-            let v: Value = serde_json::from_slice(file.bytes()?)?;
+            let bytes = file.bytes()?;
+            if bytes.is_empty() {
+                return Err(format!("{}: file is empty (0 bytes)", file.path.display()).into());
+            }
+            let v: Value = serde_json::from_slice(bytes)
+                .map_err(|e| format!("{}: {e}", file.path.display()))?;
             list.push(BiomeInfo::from_json(
                 format!("minecraft:{}", file.name),
                 &v,

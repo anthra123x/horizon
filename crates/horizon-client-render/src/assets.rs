@@ -6,13 +6,7 @@ use horizon_world::{
     worldgen::{tags::TagDefinitions, terrain::TerrainBlockStates},
 };
 use serde_json::Value;
-use std::{
-    collections::BTreeSet,
-    fs::File,
-    io::{self, BufReader},
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, io, path::Path, sync::Arc};
 
 pub const MATERIALS: [&str; 6] = ["bedrock", "dirt", "stone", "sand", "oak_planks", "bricks"];
 #[derive(Clone, Copy)]
@@ -190,15 +184,26 @@ fn invalid(message: &str) -> io::Error {
 }
 impl Assets {
     pub fn load(root: &Path) -> Result<Self> {
-        let manifest: Value = serde_json::from_reader(BufReader::new(File::open(
-            root.join("horizon-resources.json"),
-        )?))?;
+        let manifest_path = root.join("horizon-resources.json");
+        let manifest_bytes = std::fs::read(&manifest_path)
+            .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
+        if manifest_bytes.is_empty() {
+            return Err(format!("{}: file is empty (0 bytes)", manifest_path.display()).into());
+        }
+        let manifest: Value = serde_json::from_slice(&manifest_bytes)
+            .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
         if manifest["data_version"].as_i64() != Some(i64::from(DATA_VERSION)) {
             return Err(invalid("resources do not match Horizon's pinned data version").into());
         }
         let (registry, flags) = horizon_world::level::data::load_registry_with_flags(root)?;
-        let bundle: Value =
-            serde_json::from_reader(BufReader::new(File::open(root.join("block-tags.json"))?))?;
+        let tags_path = root.join("block-tags.json");
+        let tags_bytes =
+            std::fs::read(&tags_path).map_err(|e| format!("{}: {e}", tags_path.display()))?;
+        if tags_bytes.is_empty() {
+            return Err(format!("{}: file is empty (0 bytes)", tags_path.display()).into());
+        }
+        let bundle: Value = serde_json::from_slice(&tags_bytes)
+            .map_err(|e| format!("{}: {e}", tags_path.display()))?;
         let mut definitions = TagDefinitions::default();
         for (name, text) in bundle
             .as_object()

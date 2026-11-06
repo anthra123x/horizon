@@ -83,8 +83,21 @@ pub fn native_modify_default_components(item: &str, components: &mut Map<String,
 /// (`ExtraCodecs.intRange`); a mod's, which no codec decodes, to 1 to
 /// [`MAX_STACK_SIZE`], the count the wire and the save carry.
 pub fn read(root: &Path) -> io::Result<BTreeMap<String, Value>> {
-    let mut items: BTreeMap<String, Value> =
-        serde_json::from_slice(&fs::read(root.join("items.json"))?)?;
+    let items_path = root.join("items.json");
+    let bytes = fs::read(&items_path)
+        .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", items_path.display())))?;
+    if bytes.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!("{}: file is empty (0 bytes)", items_path.display()),
+        ));
+    }
+    let mut items: BTreeMap<String, Value> = serde_json::from_slice(&bytes).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{}: {e}", items_path.display()),
+        )
+    })?;
     for (item, components) in &mut items {
         if let Value::Object(components) = components {
             // A data pack's own value goes through vanilla's codec.
@@ -153,7 +166,12 @@ mod tests {
         assert_eq!(next["test:item"]["minecraft:max_stack_size"], 64);
         drop(next);
         fs::write(root.join("items.json"), "broken").unwrap();
-        assert!(super::shared(&root).is_err());
+        let broken_err = super::shared(&root).unwrap_err();
+        assert!(broken_err.to_string().contains("items.json"));
+        fs::write(root.join("items.json"), b"").unwrap();
+        let empty_err = super::shared(&root).unwrap_err();
+        assert!(empty_err.to_string().contains("items.json"));
+        assert!(empty_err.to_string().contains("empty"));
         write(2);
         assert_eq!(
             super::shared(&root).unwrap()["test:item"]["minecraft:max_stack_size"],

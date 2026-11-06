@@ -589,7 +589,20 @@ fn fail(message: &str) -> io::Error {
 /// From the file's bytes in memory: several times faster than through a
 /// reader on gameplay-facts.json (55 MB), which a first start parses.
 fn read_json(path: &Path) -> io::Result<Value> {
-    serde_json::from_slice(&fs::read(path)?).map_err(|e| invalid(e.to_string()))
+    let bytes =
+        fs::read(path).map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", path.display())))?;
+    if bytes.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!("{}: file is empty (0 bytes)", path.display()),
+        ));
+    }
+    serde_json::from_slice(&bytes).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{}: {e}", path.display()),
+        )
+    })
 }
 
 fn interned(cache: &mut HashMap<String, Arc<str>>, text: &str) -> Arc<str> {
@@ -631,7 +644,17 @@ pub fn load_registry_with_flags(root: &Path) -> io::Result<(BlockRegistry, Vec<(
         return Ok(cached);
     }
     // Read whole, then parsed from the slice: see `BlockRegistry::from_facts_json_bytes`.
-    let loaded = BlockRegistry::from_facts_json_bytes(&fs::read(root.join("facts.json"))?)?;
+    let facts_path = root.join("facts.json");
+    let bytes = fs::read(&facts_path)
+        .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", facts_path.display())))?;
+    if bytes.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!("{}: file is empty (0 bytes)", facts_path.display()),
+        ));
+    }
+    let loaded = BlockRegistry::from_facts_json_bytes(&bytes)
+        .map_err(|e| io::Error::new(e.kind(), format!("{}: {e}", facts_path.display())))?;
     cache::store_registry(root, &loaded.0, &loaded.1);
     Ok(loaded)
 }
@@ -1213,5 +1236,36 @@ impl GameplayStateSource for Value {
             .and_then(|s| s.get("id"))
             .and_then(Value::as_str)
             .unwrap_or("")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_json_and_load_registry_reject_empty_files() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("horizon-data-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let empty_json = temp_dir.join("empty.json");
+        fs::write(&empty_json, b"").unwrap();
+        let err = read_json(&empty_json).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(err.to_string().contains("empty.json"));
+        assert!(err.to_string().contains("empty (0 bytes)"));
+
+        let facts_path = temp_dir.join("facts.json");
+        fs::write(&facts_path, b"").unwrap();
+        let Err(err) = load_registry_with_flags(&temp_dir) else {
+            panic!("expected error on empty facts.json");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(err.to_string().contains("facts.json"));
+        assert!(err.to_string().contains("empty (0 bytes)"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

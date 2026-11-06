@@ -20943,10 +20943,17 @@ fn gameplay_tables(
     // pulls through a `BufReader` and is measurably slower on a file this
     // size than one read plus `from_slice`, which is how `BlockFacts` next
     // door already reads its own. Same value either way.
+    let behaviour_path = root.join("block-behaviours.json");
     let behaviour_bytes =
-        std::fs::read(root.join("block-behaviours.json")).map_err(|e| e.to_string())?;
-    let behaviour_json: serde_json::Value =
-        serde_json::from_slice(&behaviour_bytes).map_err(|e| e.to_string())?;
+        std::fs::read(&behaviour_path).map_err(|e| format!("{}: {e}", behaviour_path.display()))?;
+    if behaviour_bytes.is_empty() {
+        return Err(format!(
+            "{}: file is empty (0 bytes)",
+            behaviour_path.display()
+        ));
+    }
+    let behaviour_json: serde_json::Value = serde_json::from_slice(&behaviour_bytes)
+        .map_err(|e| format!("{}: {e}", behaviour_path.display()))?;
     drop(behaviour_bytes);
     let (facts, gameplay_projection) =
         BlockFacts::load_with_projection(root, assets.registry, &behaviour_json, parallel)
@@ -22311,18 +22318,49 @@ impl ApplicationHandler for App {
 /// manifest is `horizon-resources.json`): without them, say where they were
 /// looked for and how to get them, before a window or a loader starts.
 fn missing_resources(root: &std::path::Path) -> Option<String> {
-    if root.join("horizon-resources.json").is_file() {
-        return None;
+    let manifest = root.join("horizon-resources.json");
+    match std::fs::metadata(&manifest) {
+        Ok(m) if m.is_file() && m.len() > 0 => {}
+        Ok(m) if m.is_file() => {
+            let shown = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+            return Some(format!(
+                "Horizon's prepared game files are corrupted: horizon-resources.json in {} is empty (0 bytes)\n\
+                 Prepare resources with the launcher, or: horizon-prepare --prepare",
+                shown.display()
+            ));
+        }
+        _ => {
+            let shown = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+            return Some(format!(
+                "Horizon's prepared game files are missing: no horizon-resources.json in {}\n\
+                 Horizon is started from its launcher: download it at {} (Download). It needs your \
+                 own Minecraft: Java Edition; the launcher signs you in and prepares the game files.\n\
+                 Developers: horizon-prepare --prepare, or pass --resources <folder>",
+                shown.display(),
+                horizon_client::no_resources::DOWNLOAD_URL
+            ));
+        }
     }
-    let shown = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
-    Some(format!(
-        "Horizon's prepared game files are missing: no horizon-resources.json in {}\n\
-         Horizon is started from its launcher: download it at {} (Download). It needs your \
-         own Minecraft: Java Edition; the launcher signs you in and prepares the game files.\n\
-         Developers: horizon-prepare --prepare, or pass --resources <folder>",
-        shown.display(),
-        horizon_client::no_resources::DOWNLOAD_URL
-    ))
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension() == Some(std::ffi::OsStr::new("json")) {
+                if let Ok(m) = std::fs::metadata(&path) {
+                    if m.is_file() && m.len() == 0 {
+                        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+                        let shown =
+                            std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+                        return Some(format!(
+                            "Horizon's prepared game files are corrupted: {file_name} in {} is empty (0 bytes)\n\
+                             Prepare resources with the launcher, or: horizon-prepare --prepare",
+                            shown.display()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// `Minecraft.<init>`: `startedCleanly` left false means the previous start
@@ -22730,6 +22768,27 @@ mod startup_cpu_tests {
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("horizon-resources.json"), "{}").unwrap();
         assert_eq!(missing_resources(&root), None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn empty_prepared_files_are_reported_before_loading() {
+        let root = std::env::temp_dir().join(format!("horizon-empty-res-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("horizon-resources.json"), b"").unwrap();
+        let reported = missing_resources(&root).expect("empty manifest reported");
+        assert!(reported.contains("horizon-resources.json in"), "{reported}");
+        assert!(reported.contains("empty (0 bytes)"), "{reported}");
+
+        std::fs::write(root.join("horizon-resources.json"), b"{}").unwrap();
+        assert_eq!(missing_resources(&root), None);
+
+        std::fs::write(root.join("facts.json"), b"").unwrap();
+        let reported = missing_resources(&root).expect("empty facts reported");
+        assert!(reported.contains("facts.json in"), "{reported}");
+        assert!(reported.contains("empty (0 bytes)"), "{reported}");
+
         std::fs::remove_dir_all(&root).unwrap();
     }
 

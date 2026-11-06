@@ -514,7 +514,13 @@ impl MobTypes {
         // The Allay's InventoryCarrier loading needs item limits before a
         // Game exists. Other mob-only resource sets need no item data.
         let items: HashMap<String, Value> = if types.get("minecraft:allay").is_some() {
-            serde_json::from_slice(&fs::read(root.join("items.json"))?)?
+            let items_path = root.join("items.json");
+            let bytes =
+                fs::read(&items_path).map_err(|e| format!("{}: {e}", items_path.display()))?;
+            if bytes.is_empty() {
+                return Err(format!("{}: file is empty (0 bytes)", items_path.display()).into());
+            }
+            serde_json::from_slice(&bytes).map_err(|e| format!("{}: {e}", items_path.display()))?
         } else {
             HashMap::new()
         };

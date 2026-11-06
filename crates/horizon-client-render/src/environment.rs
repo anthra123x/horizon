@@ -151,13 +151,24 @@ impl Environment {
     /// A dimension's base attributes, optionally driven by the day timeline.
     pub fn load_dimension(root: &Path, dimension: &str, day_cycle: bool) -> Result<Self> {
         let timeline: Value = if day_cycle {
-            serde_json::from_slice(&fs::read(root.join("data/minecraft/timeline/day.json"))?)?
+            let timeline_path = root.join("data/minecraft/timeline/day.json");
+            let timeline_bytes = fs::read(&timeline_path)
+                .map_err(|e| format!("{}: {e}", timeline_path.display()))?;
+            if timeline_bytes.is_empty() {
+                return Err(format!("{}: file is empty (0 bytes)", timeline_path.display()).into());
+            }
+            serde_json::from_slice(&timeline_bytes)
+                .map_err(|e| format!("{}: {e}", timeline_path.display()))?
         } else {
             serde_json::json!({"period_ticks": 24000, "tracks": {}})
         };
-        let dimension: Value = serde_json::from_slice(&fs::read(
-            root.join(format!("data/minecraft/dimension_type/{dimension}.json")),
-        )?)?;
+        let dim_path = root.join(format!("data/minecraft/dimension_type/{dimension}.json"));
+        let dim_bytes = fs::read(&dim_path).map_err(|e| format!("{}: {e}", dim_path.display()))?;
+        if dim_bytes.is_empty() {
+            return Err(format!("{}: file is empty (0 bytes)", dim_path.display()).into());
+        }
+        let dimension: Value = serde_json::from_slice(&dim_bytes)
+            .map_err(|e| format!("{}: {e}", dim_path.display()))?;
         let mut tracks = HashMap::new();
         for (name, track) in timeline["tracks"].as_object().ok_or("invalid timeline")? {
             let easing = match &track["ease"] {

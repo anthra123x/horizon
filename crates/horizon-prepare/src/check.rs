@@ -4,7 +4,7 @@
 //! stamp out of the output's digest, so it never asks for a new `OUTPUT_VERSION`.
 
 use crate::pyjson::Value;
-use crate::{artifacts::Lock, read_json, write_json, OUTPUT_VERSION, SCHEMA};
+use crate::{OUTPUT_VERSION, SCHEMA, artifacts::Lock, read_json, write_json};
 use std::path::Path;
 
 /// The file beside `horizon-resources.json` naming the preparer's `OUTPUT_VERSION`.
@@ -35,13 +35,39 @@ pub(crate) fn remove_stamp(resources: &Path) -> Result<(), String> {
 pub fn check(root: &Path, resources: &Path) -> Result<Vec<String>, String> {
     let lock = Lock::read(root)?;
     let manifest_path = resources.join("horizon-resources.json");
-    if !manifest_path.is_file() {
-        return Ok(vec![format!(
-            "{} is not prepared: horizon-prepare --prepare",
-            resources.display()
-        )]);
+    match std::fs::metadata(&manifest_path) {
+        Ok(m) if m.is_file() && m.len() == 0 => {
+            return Ok(vec![format!(
+                "{} is empty (0 bytes): horizon-prepare --prepare",
+                manifest_path.display()
+            )]);
+        }
+        Ok(m) if m.is_file() => {}
+        _ => {
+            return Ok(vec![format!(
+                "{} is not prepared: horizon-prepare --prepare",
+                resources.display()
+            )]);
+        }
     }
     let mut lacking = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(resources) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension() == Some(std::ffi::OsStr::new("json")) {
+                if let Ok(m) = std::fs::metadata(&path) {
+                    if m.is_file() && m.len() == 0 {
+                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+                        if name != "horizon-resources.json" {
+                            lacking.push(format!(
+                                "{name} is empty (0 bytes): horizon-prepare --prepare"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
     let manifest = read_json(&manifest_path)?;
     let int = |value: Option<&Value>| value.and_then(Value::as_i64);
     if int(manifest.get("schema")) != Some(SCHEMA) {
@@ -207,6 +233,29 @@ mod tests {
             lacking[0].ends_with("horizon-prepare --prepare"),
             "{lacking:?}"
         );
+    }
+
+    #[test]
+    fn empty_manifest_or_core_files_are_reported() {
+        let root = folder("empty-check");
+        let out = root.join("out");
+        file(&out.join("horizon-resources.json"), b"");
+        let lacking = check(&root, &out).unwrap();
+        assert_eq!(lacking.len(), 1);
+        assert!(lacking[0].contains("empty (0 bytes)"));
+
+        file(
+            &out.join("horizon-resources.json"),
+            format!(r#"{{"schema": {SCHEMA}, "minecraft": "9.9"}}"#).as_bytes(),
+        );
+        file(&out.join("facts.json"), b"");
+        let lacking = check(&root, &out).unwrap();
+        assert!(
+            lacking
+                .iter()
+                .any(|l| l.contains("facts.json is empty (0 bytes)"))
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
